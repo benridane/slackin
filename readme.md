@@ -2,6 +2,7 @@
 
 ## Features
 
+- Customized for Valujoin with facebook login
 - A landing page you can point users to fill in their emails and receive an invite (`https://slack.yourdomain.com`)
 - An `<iframe>` badge to embed on any website that shows connected users in *realtime* with socket.io.
 - A SVG badge that works well from static mediums (like GitHub README pages)

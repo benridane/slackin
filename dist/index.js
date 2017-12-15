@@ -59,12 +59,28 @@ var _log = require('./log');
 
 var _log2 = _interopRequireDefault(_log);
 
+var _passportFacebook = require('./passport-facebook');
+
+var _passportFacebook2 = _interopRequireDefault(_passportFacebook);
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+// es6 runtime requirements
+var passport = require('passport');
 
 // our code
 
 
 // their code
+
+(0, _passportFacebook2.default)(passport);
+var cookieParser = require('cookie-parser');
+var bodyParser = require('body-parser');
+var session = require('express-session');
+var flash = require('express-flash');
+var handlebars = require('express-handlebars');
+var sessionStore = new session.MemoryStore();
+
 function slackin(_ref) {
   var token = _ref.token,
       _ref$interval = _ref.interval,
@@ -124,6 +140,15 @@ function slackin(_ref) {
     app.options('*', (0, _cors2.default)());
     app.use((0, _cors2.default)());
   }
+  app.use(cookieParser('secret'));
+  app.use(session({
+    cookie: { maxAge: 60000 },
+    store: sessionStore,
+    saveUninitialized: true,
+    resave: 'true',
+    secret: 'secret'
+  }));
+  app.use(flash());
 
   // splash page
   app.get('/', function (req, res) {
@@ -134,8 +159,9 @@ function slackin(_ref) {
         active = _slack$users.active,
         total = _slack$users.total;
 
+    var expressFlash = req.flash('success');
     if (!name) return res.send(404);
-    var page = (0, _vd2.default)('html', (0, _vd2.default)('head', (0, _vd2.default)('title', 'Join ', name, ' on Slack!'), (0, _vd2.default)('meta name=viewport content="width=device-width,initial-scale=1.0,minimum-scale=1.0,user-scalable=no"'), (0, _vd2.default)('link rel="shortcut icon" href=https://slack.global.ssl.fastly.net/272a/img/icons/favicon-32.png'), css && (0, _vd2.default)('link rel=stylesheet', { href: css })), (0, _splash2.default)({ coc: coc, path: path, css: css, name: name, org: org, logo: logo, channels: channels, active: active, total: total }));
+    var page = (0, _vd2.default)('html', (0, _vd2.default)('head', (0, _vd2.default)('title', 'Join ', name, ' on Slack!'), (0, _vd2.default)('meta name=viewport content="width=device-width,initial-scale=1.0,minimum-scale=1.0,user-scalable=no"'), (0, _vd2.default)('link rel="shortcut icon" href=https://slack.global.ssl.fastly.net/272a/img/icons/favicon-32.png'), css && (0, _vd2.default)('link rel=stylesheet', { href: css })), (0, _splash2.default)({ coc: coc, path: path, css: css, name: name, org: org, logo: logo, channels: channels, active: active, total: total, expressFlash: expressFlash }));
     res.type('html');
     res.send(page.toHTML());
   });
@@ -162,8 +188,78 @@ function slackin(_ref) {
   // static files
   app.use('/assets', _express2.default.static(assets));
 
+  app.post('/invite', passport.authenticate('facebook'));
+
+  app.get('/auth/facebook/callback', passport.authenticate('facebook', { session: false, failureRedirect: '/' }), function (req, res) {
+    console.log('success login');
+    var msg = "";
+    var chanId = void 0;
+    if (channels) {
+      var channel = req.body.channel;
+      if (!channels.includes(channel)) {
+        return res.status(400).json({ msg: 'Not a permitted channel' });
+      }
+      chanId = slack.getChannelId(channel);
+      if (!chanId) {
+        return res.status(400).json({ msg: 'Channel not found "' + channel + '"' });
+      }
+    }
+
+    var email = req.user.emails[0].value;
+
+    if (!email) {
+      msg = encodeURIComponent('メールアドレスが見つかりませんでした。');
+      req.flash('success', 'メールアドレスが見つかりませんでした。');
+      return res.redirect('/?msg=' + msg);
+    }
+
+    if (!(0, _emailRegex2.default)().test(email)) {
+      msg = encodeURIComponent('メールアドレスが正しくありません。');
+      req.flash('success', 'メールアドレスが正しくありません。');
+      return res.redirect('/?msg=' + msg);
+    }
+
+    // Restricting email invites?
+    if (emails && emails.indexOf(email) === -1) {
+      msg = encodeURIComponent('このメールアドレスは許可されていないメールアドレスです。');
+      req.flash('success', 'このメールアドレスは許可されていないメールアドレスです。');
+      return res.redirect('/?msg=' + msg);
+    }
+
+    if (coc && '1' != req.body.coc) {
+      msg = encodeURIComponent('規約に同意されていません。');
+      req.flash('success', '規約に同意されていません。');
+      return res.redirect('/?msg=' + msg);
+    }
+
+    (0, _slackInvite2.default)({ token: token, org: org, email: email, channel: chanId }, function (err) {
+      if (err) {
+        if (err.message === 'Sending you to Slack...') {
+          msg = encodeURIComponent('スラックに転送されます。');
+          return res.redirect('https://' + org + '.slack.com');
+          // return res
+          // .status(303)
+          // .json({ msg: err.message, redirectUrl: `https://${org}.slack.com` })
+        }
+
+        // return res
+        // .status(400)
+        // .json({ msg: err.message })
+      }
+
+      //res
+      //.status(200)
+      //.json({ msg: 'メールアドレスを確認してご参加ください!' })
+      msg = encodeURIComponent('招待メールをお送りしました。確認してご参加ください!');
+      req.flash('success', '招待メールをお送りしました。確認してご参加ください!');
+      res.redirect('/?msg=' + msg);
+    });
+  });
+
   // invite endpoint
-  app.post('/invite', (0, _bodyParser.json)(), function (req, res, next) {
+  app.post('/inviteold', (0, _bodyParser.json)(), function (req, res, next) {
+    passport.authenticate('facebook', { successRedirect: '/',
+      failureRedirect: '/' });
     var chanId = void 0;
     if (channels) {
       var channel = req.body.channel;
@@ -204,7 +300,7 @@ function slackin(_ref) {
         return res.status(400).json({ msg: err.message });
       }
 
-      res.status(200).json({ msg: 'WOOT. Check your email!' });
+      res.status(200).json({ msg: 'メールアドレスを確認してご参加ください!' });
     });
   });
 
@@ -260,4 +356,4 @@ function slackin(_ref) {
   });
 
   return srv;
-} // es6 runtime requirements
+}
